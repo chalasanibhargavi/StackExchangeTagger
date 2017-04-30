@@ -9,6 +9,7 @@ from time import time
 import operator
 import matplotlib.pyplot as plt
 import pickle
+import seaborn as sns
 
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import CountVectorizer
@@ -16,6 +17,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline
 from sklearn.grid_search import GridSearchCV
 from scipy.sparse import coo_matrix
+from sklearn.linear_model import SGDClassifier
+from sklearn.linear_model import Perceptron
 
 from sklearn.svm import SVC
 from sklearn.svm import LinearSVC
@@ -65,8 +68,6 @@ def read_data(input):
 
     #drop rows where number of tags is 0
     df_posts.drop(df_posts[df_posts['Tags'].isnull()].index, inplace=True)
-    print("Number of rows with zero tags:")
-    print(len(df_posts[df_posts['Tags'].isnull()]))
 
     # clean the 'code' part in the body
     df_posts['Body'] = df_posts['Body'].apply(clean_html)
@@ -241,6 +242,10 @@ def benchmark(clf_current):
 # Initialize the parameters for different classifiers
 def init_params():
     classlist = [
+        (Perceptron(),
+         {'estimator__penalty': ['l1', 'elasticnet'], "estimator__alpha": [.001, .0001], 'estimator__n_iter': [50]}),
+        (SGDClassifier(),
+         {'estimator__penalty': ['l1', 'elasticnet'], "estimator__alpha": [.0001, .001], 'estimator__n_iter': [50]}),
         (LinearSVC(), {'estimator__penalty': ['l1', 'l2'], 'estimator__loss': ['l2'], 'estimator__dual': [False],
                        'estimator__tol': [1e-2, 1e-3]}),
         (SVC(), {'estimator__kernel': ['rbf', 'poly', 'sigmoid']}),
@@ -303,31 +308,16 @@ def output_csv(results):
 
 # make some plots
 def plot_results(current_results, title="Score"):
-    indices = np.arange(len(current_results))
 
-    results2 = [[x[i] for x in current_results] for i in range(4)]
+    df_res = pd.DataFrame(results, columns=['Classifier', 'F1-Score', 'Train-Time', 'Test-Time'])
+    df_res.reset_index(inplace=True)
+    sns.set(style='whitegrid')
+    sns.set_context("poster")
+    ax = sns.barplot(x='Classifier', y='F1-Score', data=df_res)
+    ax.set(xlabel='Classifier', ylabel='F1 Score')
+    ax.set_title('Results for all the classifiers')
 
-    clf_names, score, training_time, test_time = results2
-    max_train_time = np.max(training_time)
-    training_time = np.array(training_time) / max_train_time
-    test_time = np.array(test_time) / max_train_time
-
-    plt.figure(1, figsize=(14, 5))
-    plt.title(title)
-    plt.barh(indices, score, .2, label="score", color='r')
-    plt.barh(indices + .3, training_time, .2, label="training time", color='g')
-    plt.barh(indices + .6, test_time, .2, label="test time", color='b')
-    plt.yticks(())
-    plt.legend(loc='best')
-    plt.xlabel('Mean F1 Score (time values are indexed so max training time = 1.0)')
-    plt.subplots_adjust(left=.25)
-    plt.subplots_adjust(top=.95)
-    plt.subplots_adjust(bottom=.05)
-
-    for i, c in zip(indices, clf_names):
-        plt.text(-.2, i, c)
-
-    plt.show()
+    sns.plt.show()
 
 
 
