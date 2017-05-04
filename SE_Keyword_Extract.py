@@ -1,6 +1,3 @@
-# coding: utf-8
-
-# In[5]:
 
 import pandas as pd
 import numpy as np
@@ -18,7 +15,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.grid_search import GridSearchCV
 from scipy.sparse import coo_matrix
 from sklearn.linear_model import SGDClassifier
-from sklearn.linear_model import Perceptron
 
 from sklearn.svm import SVC
 from sklearn.svm import LinearSVC
@@ -52,6 +48,9 @@ def tag_split(text):
 def append_tag(tag_list):
     return ';'.join(tag_list)
 
+#tag length
+def getlen(taglist):
+    return len(taglist)
 
 # tokenize the given text
 def my_tokenizer(s):
@@ -80,54 +79,27 @@ def read_data(input):
     df_posts['split_tags'] = df_posts['Tags'].apply(tag_split)
 
     df_posts_merged = df_posts[['Id', 'Full_Text', 'split_tags']]
+
+    # to subset for 2 and 3 tags
+    # df_posts_merged['tag_length'] = df_posts_merged['split_tags'].apply(getlen)
+    # df_posts_merged = df_posts_merged[df_posts_merged['tag_length'] == 2]
+    # df_posts_merged.drop('tag_length', axis=1, inplace=True)
+
     df_posts_merged['Tag_text'] = df_posts_merged['split_tags'].apply(append_tag)
 
     return df_posts_merged
 
+def vectorizeX(Text, X_min_df=.0001):
+    X_vec = TfidfVectorizer(min_df=X_min_df, sublinear_tf=True, max_df=0.9, stop_words='english')
+    X = X_vec.fit_transform(Text)
+    return coo_matrix(X)
 
+def vectorizeY(Tags, Y_min_df=.0001):
+    Y_vec = CountVectorizer(tokenizer=my_tokenizer, min_df=Y_min_df, binary=True)
+    Y = Y_vec.fit_transform(Tags)
+    return Y
 
-"""
-    Function
-    --------
-    makeX(Text, X_min_df)
-
-    Converts Text to vectorized representation X
-
-"""
-
-
-def makeX(Text, X_min_df=.0001):
-    X_vectorizer = TfidfVectorizer(min_df=X_min_df, sublinear_tf=True, max_df=0.9, stop_words='english')
-    X = X_vectorizer.fit_transform(Text)
-    return coo_matrix(X), X_vectorizer
-
-
-"""
-    Function
-    --------
-    makeY(Tags, Y_min_df)
-
-    Converts Tags to vectorized representation Y
-
-
-"""
-
-
-def makeY(Tags, Y_min_df=.0001):
-    Y_vectorizer = CountVectorizer(tokenizer=my_tokenizer, min_df=Y_min_df, binary=True)
-    Y = Y_vectorizer.fit_transform(Tags)
-    return Y, Y_vectorizer
-
-
-# In[29]:
-
-"""
-    Takes input dfmatrix and returns the matrix of predicted tags.
-
-"""
-
-
-def df_to_preds(dfmatrix, k=5):
+def predictTags(dfmatrix, k):
     predsmatrix = np.zeros(dfmatrix.shape)
     for i in range(0, dfmatrix.shape[0]):
         dfs = list(dfmatrix[i])
@@ -142,16 +114,9 @@ def df_to_preds(dfmatrix, k=5):
             predsmatrix[i, :] = listofzeros
     return predsmatrix
 
+""" Predict tags from probabilities """
 
-"""
-
-    Takes input probsmatrix and returns the matrix of predicted tags.
-
-
-"""
-
-
-def probs_to_preds(probsmatrix, k=5):
+def probTags(probsmatrix, k):
     predsmatrix = np.zeros(probsmatrix.shape)
     for i in range(0, probsmatrix.shape[0]):
         probas = list(probsmatrix[i])
@@ -168,31 +133,26 @@ def probs_to_preds(probsmatrix, k=5):
 
 
 
-"""
-    Function
-    --------
-    opt_params(clf_current, params)
-
-    Determines the set of parameters for clf_current that maximize cross-validated F1 score using sklearn's GridSearchCV
-
-"""
+""" Perform GridSearchCV to get the best set of parameters for each classifier """
 
 
-def opt_params(clf_current, params):
+def performGridCV(clf_current, params):
     model_to_set = OneVsRestClassifier(clf_current)
     grid_search = GridSearchCV(model_to_set, param_grid=params, scoring="f1_weighted")
 
+    print('~' * 100)
     print("Performing grid search on " + str(clf_current).split('(')[0])
-    print("parameters:")
+    print("Specified parameters:")
     print(params)
     grid_search.fit(X_train, Y_train.toarray())
     print()
 
     print("Best score: %0.3f" % grid_search.best_score_)
-    print("Best parameters set:")
+    print("Best parameters after tuning:")
     best_parameters = grid_search.best_estimator_.get_params()
     for param_name in sorted(params.keys()):
         print("\t%s: %r" % (param_name, best_parameters[param_name]))
+    print('~' * 100)
 
     gs = grid_search.grid_scores_
     ret = [(i[0], i[1]) for i in gs]
@@ -201,54 +161,42 @@ def opt_params(clf_current, params):
 
 # In[91]:
 
-"""
-    Function
-    --------
-    benchmark(clf_current)
+""" Check classifier accuracy on test set """
 
-    Takes the classifier passed and determines how well it performs on the test set.
-
-
-"""
-
-
-def benchmark(clf_current):
-    print('_' * 80)
-    print("Test performance for: ")
+def benchmark_on_testset(clf_current):
+    print('~' * 50)
+    print("Performance on test set for: ")
     clf_descr = str(clf_current).split('(')[0]
     print(clf_descr)
     t0 = time()
     classif = OneVsRestClassifier(clf_current)
     classif.fit(X_train, Y_train.toarray())
     train_time = time() - t0
-    print("train time: %0.3fs" % train_time)
+    print("Training time: %0.3fs" % train_time)
     t0 = time()
     if hasattr(clf_current, "decision_function"):
         dfmatrix = classif.decision_function(X_test)
-        score = metrics.f1_score(Y_test.toarray(), df_to_preds(dfmatrix, k=5), average="macro")
+        score = metrics.f1_score(Y_test.toarray(), predictTags(dfmatrix, k=5), average="weighted")
     else:
         probsmatrix = classif.predict_proba(X_test)
-        score = metrics.f1_score(Y_test.toarray(), probs_to_preds(probsmatrix, k=5), average="macro")
+        score = metrics.f1_score(Y_test.toarray(), probTags(probsmatrix, k=5), average="weighted")
 
     test_time = time() - t0
 
-    print("f1-score:   %0.7f" % score)
-    print("test time:  %0.3fs" % test_time)
+    print("Weighted f1-score:   %0.7f" % score)
+    print("Testing time:  %0.3fs" % test_time)
 
-    print('_' * 80)
+    print('~' * 50)
     return clf_descr, score, train_time, test_time
 
 
 # Initialize the parameters for different classifiers
 def init_params():
     classlist = [
-        (Perceptron(),
-         {'estimator__penalty': ['l1', 'elasticnet'], "estimator__alpha": [.001, .0001], 'estimator__n_iter': [50]}),
         (SGDClassifier(),
          {'estimator__penalty': ['l1', 'elasticnet'], "estimator__alpha": [.0001, .001], 'estimator__n_iter': [50]}),
         (LinearSVC(), {'estimator__penalty': ['l1', 'l2'], 'estimator__loss': ['l2'], 'estimator__dual': [False],
                        'estimator__tol': [1e-2, 1e-3]}),
-        (SVC(), {'estimator__kernel': ['rbf', 'poly', 'sigmoid']}),
         (MultinomialNB(), {"estimator__alpha": [.01, .1], "estimator__fit_prior": [True, False]}),
         (BernoulliNB(), {"estimator__alpha": [.01, .1], "estimator__fit_prior": [True, False]})
     ]
@@ -257,13 +205,13 @@ def init_params():
 
 
 # optimize the params for the list of initialized classifiers and then execute it on the test set
-def run_opt_test(classlist, optimize_params = 0):
+def tuneClassifiers(classlist, optimize_params = 0):
     results = []
     classifier_pickle = []
 
     if optimize_params == 1:
         for classifier, params_to_optimize in classlist:
-            best_params, gs = opt_params(classifier, params_to_optimize)
+            best_params, gs = performGridCV(classifier, params_to_optimize)
             classifier_pickle.append(best_params['estimator'])
 
         pickle.dump(classifier_pickle, open("classifierpickle" + ".p", "wb"))
@@ -271,7 +219,7 @@ def run_opt_test(classlist, optimize_params = 0):
     else:
         classifier_pickle = pickle.load(open("classifierpickle" + ".p", "rb"))
         for best_paramet in classifier_pickle:
-            results.append(benchmark(best_paramet))
+            results.append(benchmark_on_testset(best_paramet))
 
     return results
 
@@ -280,30 +228,10 @@ def run_opt_test(classlist, optimize_params = 0):
 # output results to a csv file
 def output_csv(results):
     df_res = pd.DataFrame(results, columns=['Classifier', 'F1-Score', 'Train-Time', 'Test-Time'])
-    df_res.to_csv('rtest_results.csv')
+    df_res.to_csv('test_results.csv')
 
 
-"""
-    Function
-    --------
-    plot_results(current_results)
-
-    Takes results of benchmarking function and plot
-
-    Parameters
-    ----------
-
-    current_results : list
-        Output of the benchmark function
-
-    title : str
-        The title for the plot
-
-    Returns
-    -------
-    None
-
-"""
+""" Plot the classifier performance """
 
 
 # make some plots
@@ -327,19 +255,19 @@ warnings.filterwarnings("ignore")
 
 df_posts_merged = read_data("SOPosts_combined.csv")
 
-Text = df_posts_merged['Full_Text'].tolist()[:1000]
-Tags = df_posts_merged['Tag_text'].tolist()[:1000]
+Text = df_posts_merged['Full_Text'].tolist()
+Tags = df_posts_merged['Tag_text'].tolist()
 
-Y, vectorizer2 = makeY(Tags, Y_min_df=int(1))
-X, vectorizer1 = makeX(Text, X_min_df=int(10))
+Y = vectorizeY(Tags, Y_min_df=int(1))
+X = vectorizeX(Text, X_min_df=int(10))
 X_current = X
 X_train, X_test, Y_train, Y_test = train_test_split(X_current, Y)
 
-print("Classifying data of size Train: " + str(X_train.shape[0]) + " Test: " + str(X_test.shape[1]))
+print("Classifying data of size Train: " + str(X_train.shape[0]) + " Test: " + str(X_test.shape[0]))
 
 classlist = init_params()
 
-results = run_opt_test(classlist, 0) # 1 - to generate optimal parameters, 0 - to use generated parameters
+results = tuneClassifiers(classlist, 0) # 1 - to generate optimal parameters, 0 - to use generated parameters
 
 if results:
     plot_results(results, title="Classifier F1 Results on Tf-idf vector")
@@ -348,4 +276,4 @@ if results:
 else:
     print("Successfully generated optimal parameters")
     print("Now call run_opt_test(classlist, 0) to test")
-
+    print("-------------------------------------------")
